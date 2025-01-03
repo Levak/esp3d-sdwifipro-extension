@@ -1,4 +1,6 @@
 Extension for ESP3D v3.x WebUI to interact with custom SD WIFI PRO firmware.
+![image](https://github.com/user-attachments/assets/663996fd-b109-41be-85ef-9d715e0a7553)
+
 
 # Setup
 
