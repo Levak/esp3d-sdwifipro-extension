@@ -1,0 +1,529 @@
+<style>
+.drop-zone {
+  height: 420px !important;
+}
+.file-line-name label {
+  text-overflow: ellipsis;
+  width: 165px;
+  overflow: hidden;
+  text-wrap-mode: nowrap;
+  margin-left: .25rem;
+}
+
+@media screen and (max-width: 1024px) {
+.file-line-name label {
+  width: 100%;
+}}
+@media screen and (max-width: 900px) {
+.file-line-name label {
+  width: 410px;
+}}
+@media screen and (max-width: 600px) {
+.file-line-name label {
+  width: 255px;
+}}
+
+@media screen and (max-width: 480px) {
+.file-line-name label {
+  width: 210px;
+}}
+
+@media screen and (max-width: 450px) {
+.file-line-name label {
+  width: 185px;
+}}
+
+@media screen and (max-width: 425px) {
+.file-line-name label {
+  width: 165px;
+}}
+
+@media screen and (max-width: 400px) {
+.file-line-name label {
+  width: 145px;
+}}
+
+@media screen and (max-width: 350px) {
+.file-line-name label {
+  width: 120px;
+}}
+
+.file-download {
+    display: none !important;
+    justify-content: flex-start !important;
+}
+
+@media screen and (max-width: 400px) {
+.file-line .file-line-name {
+  margin-right: 100%;
+}
+
+.file-line .file-line-name label {
+    width: auto;
+}
+
+.file-line .file-line-controls {
+    display:none !important;
+}
+
+.file-line.focus .file-line-controls {
+    display: inherit !important;
+}
+
+.file-download {
+    display: inherit !important;
+}
+}
+
+.file-line-controls div.btn {
+  min-width: 2rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+div #refresh {
+  display: inline;
+}
+div #mkdir {
+  display: inline;
+}
+div #abort {
+  display: none;
+}
+div #progress {
+  display: none;
+}
+
+div.upload #refresh {
+  display: none;
+}
+div.upload #mkdir {
+  display: none;
+}
+div.upload #abort {
+  display: inline;
+}
+div.upload #progress {
+  display: inline;
+}
+</style>
+<div style="height: 470px; overflow-y: clip;">
+  <button class="btn m-1" id="uploadBtn">Upload</button>
+  <button class="btn emergency-btn m-1" disabled id="abort">Abort</button>
+  <button class="btn m-1" id="refresh">Refresh</button>
+  <button class="btn m-1" id="mkdir">New Directory</button>
+  <input type="file" class="d-none" id="uploadField" multiple="multiple"/>
+  <progress id="progress"></progress>
+  <div class="m-2" id="output"> </div>
+  <div class="drop-zone files-list m-1" id="list"></div>
+  <div id="cancel"></div>
+</div>
+<div class="files-list-footer">
+  <div id="stats" style="display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between;">
+    <div class="flex-pack" id="total"></div>
+    <div class="m-1">-</div>
+    <div class="flex-pack m-2" id="used"></div>
+    <div class="flex-pack m-1">
+      <div class="bar bar-sm" style="width: 4rem;">
+        <div class="bar-item" id="used-perc" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+      <span class="m-1" id="used-perc-txt"></span>
+    </div>
+  </div>
+</div>
+  <script type="text/javascript">
+//const get_args = Object.assign({}, ...window.location.search.substr(1).split('&').map((e)=>{const s=e.split('=', 2); return s==""?null:{[s[0]]:s[1]};}));
+//const SD_BASE_URL = 'http://' + (get_args['host'] || window.location.host);
+const SD_BASE_URL = 'http://192.168.1.27';
+
+function sendMessage(msg){
+  window.parent.postMessage(msg, '*');
+}
+
+function byteSizeToString(size) {
+  if (-1 === size || isNaN(size)) {
+    return '';
+  }
+  let n = 0;
+  for (; size >= 1024; ++n) {
+    size /= 1024;
+  }
+  return `${size.toFixed(2)} ${['B', 'KB', 'MB', 'GB'][n]}`
+}
+
+addEventListener("DOMContentLoaded", () => {
+  const fileInput = document.getElementById("uploadField");
+  const uploadBtn = document.getElementById('uploadBtn');
+  const progressBar = document.querySelector("progress");
+  const log = document.getElementById("output");
+  const list = document.getElementById("list");
+  const abortButton = document.getElementById("abort");
+  const cancelButton = document.getElementById("cancel");
+  const refreshButton = document.getElementById("refresh");
+  const mkdirButton = document.getElementById("mkdir");
+
+  let current_dir = [ ];
+
+  uploadBtn.addEventListener("click", () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
+  
+  fileInput.addEventListener("change", () => {
+    uploadFiles(Array.from(fileInput.files));
+  });
+
+  function uploadFiles(files) {
+    const xhr = new XMLHttpRequest();
+    // Link abort button
+    abortButton.addEventListener("click", () => {
+        xhr.abort();
+      }, { once: true }
+    );
+    
+    const queued = (files.length > 1) ? ` + ${files.length-1} queued` : '';
+
+    // When the upload starts, we display the progress bar
+    xhr.upload.addEventListener("loadstart", (event) => {
+      progressBar.parentNode.classList.add("upload");
+      progressBar.value = 0;
+      progressBar.max = event.total;
+      log.textContent = "Uploading (0%)..." + queued;
+      abortButton.disabled = false;
+    });
+
+    // Each time a progress event is received, we update the bar
+    xhr.upload.addEventListener("progress", (event) => {
+      progressBar.value = event.loaded;
+      progressBar.max = event.total;
+      log.textContent = `Uploading (${(
+        (event.loaded / event.total) * 100
+      ).toFixed(2)}%)...` + queued;
+    });
+
+    // When the upload is finished, we hide the progress bar.
+    xhr.upload.addEventListener("loadend", (event) => {
+      progressBar.parentNode.classList.remove("upload");
+      abortButton.disabled = true;
+    });
+    
+    xhr.addEventListener("load", (event) => {
+      const file = JSON.parse(event.target.responseText)['item'];
+
+      if (file) {
+        add_file_entry(file, true);
+      }
+
+      if (files.length > 1) {
+        uploadFiles(files.slice(1));
+      }
+    });
+
+    // When the upload has been aborted
+    xhr.upload.addEventListener("aborted", (event) => {
+      log.textContent = "Upload aborted.";
+    });
+    // When the upload is completed
+    xhr.upload.addEventListener("load", (event) => {
+      //log.textContent = "Upload finished.";
+      log.textContent = '';
+    });
+
+    // In case of an error, an abort, or a timeout, we hide the progress bar
+    // Note that these events can be listened to on the xhr object too
+    function errorAction(event) {
+      progressBar.parentNode.classList.remove("upload");
+      log.textContent = `Upload failed: ${event.type}`;
+    }
+    xhr.upload.addEventListener("error", errorAction);
+    xhr.upload.addEventListener("abort", errorAction);
+    xhr.upload.addEventListener("timeout", errorAction);
+
+    // Build the payload
+    const fileData = new FormData();
+    fileData.append("file", files[0]);
+
+    // Theoretically, event listeners could be set after the open() call
+    // but browsers are buggy here
+    xhr.open("POST", SD_BASE_URL + '/upload?path=' + current_dir.concat(files[0].name).join('/'), true);
+
+    // Note that the event listener must be set before sending (as it is a preflighted request)
+    xhr.send(fileData);
+  }
+
+  function is_hidden_controls() {
+    return window.screen.width < 400;
+  }
+
+  let file_list = {};
+  function add_file_entry(file, first) {
+    const file_line = document.createElement('div')
+    file_line.setAttribute('class', 'file-line form-control');
+
+    // If an element exists with the same name, delete it from DOM
+    if (file_list[file.sfn]) {
+      file_list[file.sfn].remove();
+    }
+    file_list[file.sfn] = file_line;
+
+    if (first) {
+      list.insertBefore(file_line, list.childNodes[(current_dir.length > 0) ? 1 : 0]);
+    } else {
+      list.appendChild(file_line);
+    }
+
+    const file_line_name = file_line.appendChild(document.createElement('div'));
+    file_line_name.setAttribute('class', 'feather-icon-container file-line-name file-line-action');
+    if (file.type != 'dir') {
+      file_line_name.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-darkreader-inline-stroke="" style="--darkreader-inline-stroke: currentColor;"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
+    } else {
+      file_line_name.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+    }
+
+    const label = file_line_name.appendChild(document.createElement('label'));
+    label.setAttribute('title', file.name);
+    label.innerText = file.name;
+
+    const file_download_controls = file_line.appendChild(document.createElement('div'));
+    file_download_controls.setAttribute('class', 'file-line-controls file-download');
+
+    const file_line_controls = file_line.appendChild(document.createElement('div'));
+    file_line_controls.setAttribute('class', 'file-line-controls');
+
+    if (file.type != 'dir') {
+      const size = file_line_controls.appendChild(document.createElement('label'));
+      size.innerText = byteSizeToString(file.size);
+
+      const button_download = file_download_controls.appendChild(document.createElement('button'));
+      button_download.setAttribute('class', 'btn m-1 tooltip tooltip-right  feather-icon-container');
+      button_download.setAttribute('data-tooltip', 'Download file');
+      
+      const button_download_a = button_download.appendChild(document.createElement('a'));
+      button_download_a.setAttribute('href', SD_BASE_URL + '/download?path=' + current_dir.concat(file.name).join('/') );
+      button_download_a.setAttribute('download', '');
+      button_download_a.setAttribute('hidden', '');
+
+      button_download.addEventListener('click', () => {
+        button_download_a.click();
+      });
+
+      const button_download_icon_div = button_download.appendChild(document.createElement('div'));
+      button_download_icon_div.setAttribute('style', 'pointer-events: none;');
+      button_download_icon_div.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>'
+
+      if (file.name.toLowerCase().match('.gco[^.]*')) {
+        const button_play = file_line_controls.appendChild(document.createElement('button'));
+        button_play.setAttribute('class', 'btn m-1 tooltip tooltip-left  feather-icon-container');
+        button_play.setAttribute('data-tooltip', 'Play file');
+        button_play.addEventListener('click', () => {
+          if (!is_hidden_controls() || confirm('Print ' + file.name + '?')) {
+            sendMessage({target: 'webui', type:'cmd', content: 'M23 /' + current_dir.concat(file.sfn).join('/')  + '\nM24'});
+          }
+        });
+
+        const button_play_icon_div = button_play.appendChild(document.createElement('div'));
+        button_play_icon_div.setAttribute('style', 'pointer-events: none;');
+        button_play_icon_div.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-darkreader-inline-stroke="" style="--darkreader-inline-stroke: currentColor;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+      } else {
+        const button_play = file_line_controls.appendChild(document.createElement('div'));
+        button_play.setAttribute('style', 'width: 2rem;');
+      }
+
+      label.addEventListener('click', () => {
+        if (!is_hidden_controls()) {
+          button_download_a.click();
+        } else {
+          Array.from(document.getElementsByClassName('file-line')).forEach((e)=>{
+            e.classList.remove('focus');
+          });
+          file_line.classList.add('focus');
+        }
+      });
+    } else {
+      label.addEventListener('click', () => {
+        current_dir.push(file.name);
+        updateList();
+      });
+    }
+
+    const button_delete = file_line_controls.appendChild(document.createElement('button'));
+    button_delete.setAttribute('class', 'btn m-1 tooltip tooltip-left  feather-icon-container');
+    button_delete.setAttribute('data-tooltip', 'Delete file');
+    button_delete.addEventListener('click', () => {
+      if (is_hidden_controls() && !confirm('Delete ' + file.name + '?')) {
+        return;
+      }
+
+      const xhr2 = new XMLHttpRequest();
+      xhr2.timeout = 10000; // 10 seconds
+      xhr2.addEventListener("load", (event) => {
+        if (event.target.status == 200) {
+          list.removeChild(file_line);
+        }
+      });
+      xhr2.addEventListener("error", (event) => {
+        updateList();
+      });
+      if (file.type != 'dir') {
+        xhr2.open("GET", SD_BASE_URL + '/remove?path=' + current_dir.concat(file.name).join('/'), true);
+      } else {
+        xhr2.open("GET", SD_BASE_URL + '/rmdir?path=' + current_dir.concat(file.name).join('/'), true);
+      }
+      xhr2.send();
+    });
+
+    const button_delete_icon_div = button_delete.appendChild(document.createElement('div'));
+    button_delete_icon_div.setAttribute('style', 'pointer-events: none;');
+    button_delete_icon_div.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-darkreader-inline-stroke="" style="--darkreader-inline-stroke: currentColor;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+  }
+
+  let xhr_list = new XMLHttpRequest();
+  function updateList() {
+    if (xhr_list != null) {
+      xhr_list.abort();
+    }
+
+    xhr_list = new XMLHttpRequest();
+    xhr_list.timeout = 30000; // 30 seconds
+
+    file_list = {};
+    list.setAttribute('hidden', '');
+    list.innerHTML = '';
+    cancel.setAttribute('hidden', '');
+    cancel.innerHTML = '';
+    log.textContent = '';
+
+    const center = cancel.appendChild(document.createElement('center'));
+    center.setAttribute('disabled', 'true');
+    const center_div = center.appendChild(document.createElement('div'));
+    center_div.setAttribute('class', 'loading  m-2');
+    center_div.setAttribute('disabled', 'true');
+
+    const cancel_button = center.appendChild(document.createElement('button'));
+    cancel_button.setAttribute('class', 'btn do-not-disable tooltip  feather-icon-container');
+    cancel_button.setAttribute('data-tooltip', 'Cancel');
+    cancel_button.setAttribute('style', 'min-width: 2rem; display: inline-block; white-space: nowrap;');
+    cancel_button.addEventListener("click", (event) => {
+      xhr_list.abort();
+    });
+
+    const cancel_div = cancel_button.appendChild(document.createElement('div'));
+    cancel_div.setAttribute('style', 'white-space: nowrap; cursor: pointer; pointer-events: none; overflow: hidden !important; text-overflow: ellipsis !important;');
+    cancel_div.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-darkreader-inline-stroke="" style="--darkreader-inline-stroke: currentColor;"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>'
+
+    const cancel_label = cancel_div.appendChild(document.createElement('label'));
+    cancel_label.innerText = 'Cancel';
+    cancel.removeAttribute('hidden');
+
+    xhr_list.addEventListener("load", (event) => {
+      if (current_dir.length > 0) {
+        const up_line = list.appendChild(document.createElement('div'));
+        up_line.setAttribute('class', 'file-line file-line-name');
+
+        const up_line_action = up_line.appendChild(document.createElement('div'));
+        up_line_action.setAttribute('class', 'form-control  file-line-name file-line-action');
+        up_line_action.setAttribute('style', 'height: 2rem !important;');
+        up_line_action.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 9 15 4 20 9"></polyline><path d="M4 20h7a4 4 0 0 0 4-4V4"></path></svg>'
+
+        const up_label = up_line_action.appendChild(document.createElement('label'));
+        up_label.setAttribute('class', 'p-2');
+        up_label.innerText = '...';
+
+        up_label.addEventListener('click', () => {
+          current_dir.pop();
+          updateList();
+        });
+      }
+
+      JSON.parse(event.target.responseText).toSorted((a, b) => {
+        if (a.type == b.type) {
+          return b.last - a.last;
+        } else if (a.type == "dir") {
+          return -1;
+        } else {
+          return 1;
+        }
+      }).forEach((file) => {
+        add_file_entry(file);
+      });
+
+      list.removeAttribute('hidden');
+      xhr_list = null;
+    });
+
+    xhr_list.addEventListener("loadend", (event) => {
+      cancel.setAttribute('hidden', true);
+    });
+    xhr_list.addEventListener("error", (event) => {
+      log.textContent = "Error";
+    });
+    xhr_list.addEventListener("timeout", (event) => {
+      log.textContent = "Timeout";
+    });
+
+    xhr_list.open("GET", SD_BASE_URL + '/list?path=' + current_dir.join('/'), true);
+    xhr_list.send();
+  }
+
+  function updateUsage() {
+    const stats = document.getElementById("stats");
+    const usedDiv = document.getElementById("used");
+    const totalDiv = document.getElementById("total");
+    const percProgress = document.getElementById("used-perc");
+    const percSpan = document.getElementById("used-perc-txt");
+
+    stats.classList.add('d-none');
+
+    const xhr = new XMLHttpRequest();
+    xhr.timeout = 10000; // 10 seconds
+    xhr.addEventListener("load", (event) => {
+      const sysinfo = JSON.parse(event.target.responseText);
+      if (sysinfo.info
+          && sysinfo.info.filesystem
+          && sysinfo.info.filesystem.usedbytes > 0
+          && sysinfo.info.filesystem.totalbytes > 0) {
+        usedDiv.innerText = 'Used: ' + byteSizeToString(sysinfo.info.filesystem.usedbytes);
+        totalDiv.innerText = 'Total: ' + byteSizeToString(sysinfo.info.filesystem.totalbytes);
+        const perc = (sysinfo.info.filesystem.usedbytes / sysinfo.info.filesystem.totalbytes * 100).toFixed(0);
+        percProgress.setAttribute('aria-valuenow', perc);
+        percProgress.setAttribute('style', 'width: ' + perc + '%;');
+        percSpan.innerText = perc + '%';
+        stats.classList.remove('d-none');
+      }
+    });
+
+    xhr.open("GET", SD_BASE_URL + '/sysinfo', true);
+    xhr.send();
+  }
+
+  refreshButton.addEventListener("click", () => {
+      updateUsage();
+      updateList();
+    }
+  );
+
+  mkdirButton.addEventListener('click', () => {
+    const name = (prompt('Directory name:') || '').replaceAll('/','');
+    if (name.length > 0)
+    {
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = 10000; // 10 seconds
+      xhr.addEventListener("load", (event) => {
+        const obj = JSON.parse(event.target.responseText);
+        const file = obj['item'];
+        if (file) {
+          add_file_entry(file, true);
+        } else {
+          updateList();
+          log.textContent(obj['error']);
+        }
+      });
+      xhr.open("GET", SD_BASE_URL + '/mkdir?path=' + current_dir.concat(name).join('/'), true);
+      xhr.send();
+    }
+  });
+
+  updateUsage();
+  updateList();
+});
+  </script>
